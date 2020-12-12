@@ -23,5 +23,5 @@ def calculateVoronoi(width,length,ypoints,xpoints):
             cp = [closestPoint(point,points)]
             grid[i][j] = distance.cdist(point,cp)
 
-    return grid
+    return np.array(grid)
         
