@@ -228,12 +228,15 @@ def anim():
 
             if (int(x) < 0+buffer or int(x) >= width-buffer or int(y)<0+buffer or int(y)>=length-buffer):
                 break
+
+        # put all sediment where the walker finishes
+        depositSediment(x,y,sediment)
+        
         #hmm... maybe just save previous gradient locally too? #TODO
         # only copy every n drops
         if(i%copyRate==0):
             prev_grid = grid.copy()
-        # put all sediment where the walker finishes
-        depositSediment(x,y,sediment)
+        
         
         # every 50 drops
         if(i%100==0):
