@@ -2,129 +2,68 @@ import numpy as np
 import matplotlib.pyplot as plt
 import voronoi as v
 import cv2
-import multiprocessing
 import time
 
+from multiprocessing.shared_memory import SharedMemory
+from multiprocessing.managers import SharedMemoryManager
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import current_process, cpu_count, Process, Pool
+
 #TODO: make mavavi optional with cmd line flag
-from mayavi import mlab
+#from mayavi import mlab
 
 def calculateGradient(grid):
     grad = np.gradient(grid)
     return grad
 
-
-
-def depositSediment(x,y,dsediment, prev_frame, difference):
-    """
-    x,y = grid position to deposit/erode sediment
-    sediment = amount by which to change the height
-    prev_frame = numpy array reference, for reading only. calculations are based on this
-    difference = numpy array reference, for output. the difference that should be applied to calculate the next frame 
-    """
+def depositSedimentFancyDirect(x,y,dsediment, shared_array):
     x = int(x)
     y = int(y)
-    width,length = prev_frame.shape
+    width,length = shared_array.shape
 
     # if point is within grid
     if not (x < 0 or x >= width or y<0 or y>=length):
-        # divide the sediment among the valid tiles
-        difference[x][y] = dsediment
-                        
-    # could return difference, but it's passed by reference so the original is modified I think that might add calls
-    #return difference
-def depositSedimentSemiFancy(x,y,dsediment, prev_frame, difference):
-    """
-    x,y = grid position to deposit/erode sediment
-    sediment = amount by which to change the height
-    prev_frame = numpy array reference, for reading only. calculations are based on this
-    difference = numpy array reference, for output. the difference that should be applied to calculate the next frame 
-    """
-    x = int(x)
-    y = int(y)
-    width,length = prev_frame.shape
+            
+        smoothSpread = True
+        if smoothSpread:
+            neighbors = np.empty(9)
+            neighbors[:] = np.NaN
+            validcount = 0
+            localsum = 0.0
 
-    # if point is within grid
-    if not (x < 0 or x >= width or y<0 or y>=length):
-        neighbors = np.empty(9)
-        neighbors[:] = np.NaN
-        validcount = 0
-        localsum = 0.0
+            #TODO: check if I can do this step faster with numpy functions
 
-        #TODO: check if I can do this step faster with numpy functions
+            # iterate over neighbors, use them to calculate mean if they are valid
+            for i in range(-1,2):
+                if i+x>=0 and i+x < width:
+                    for j in range(-1,2):
+                        if j+y>=0 and j+y<length:
+                            # (i+x, j+y) is a valid neighbor, increment validcount and 
+                            validcount += 1
+                            localsum += shared_array[i+x][j+y]
 
-        # iterate over neighbors, use them to calculate mean if they are valid
-        for i in range(-1,2):
-            if i+x>=0 and i+x < width:
-                for j in range(-1,2):
-                    if j+y>=0 and j+y<length:
-                        # (i+x, j+y) is a valid neighbor, increment validcount and 
-                        validcount += 1
-                        localsum += prev_frame[i+x][j+y]
+            # divide the sediment among the valid tiles
+            ds = dsediment / float(validcount)
+            # calculate the avg height of the valid tiles
+            avg = localsum / float(validcount)
 
-        # divide the sediment among the valid tiles
-        ds = dsediment / float(validcount)
-        # calculate the avg height of the valid tiles
-        avg = localsum / float(validcount)
-        # now iterate over neighbors to update their values
-        for i in range(-1,2):
-            if i+x>=0 and i+x < width:
-                for j in range(-1,2):
-                    if j+y>=0 and j+y<length:
-                        # (i+x, j+y) is a valid tile, set its value to the local avg + the appropriate chunk of sediment
-                        # set em all to the avg, kindof like a smearing brush (** this has little artefacts when the drop changes direction.. ** #TODO improve that)
-                        ##TODO: this is a bit convoluted.. ideally I won't need the prev_frame at all in depositSediment
-                        difference[i+x][j+y] = avg + ds - prev_frame[i+x][j+y]
-                        
-    # could return difference, but it's passed by reference so the original is modified I think that might add calls
-    #return difference
+            # now iterate over neighbors to update their values
+            for i in range(-1,2):
+                if i+x>=0 and i+x < width:
+                    for j in range(-1,2):
+                        if j+y>=0 and j+y<length:
+                            # (i+x, j+y) is a valid tile, set its value to the local avg + the appropriate chunk of sediment
+                            # set em all to the avg
+                            #shared_array[i+x][j+y] = avg + ds
 
-def depositSedimentFancy(x,y,dsediment, prev_frame, difference):
-    """
-    x,y = grid position to deposit/erode sediment
-    sediment = amount by which to change the height
-    prev_frame = numpy array reference, for reading only. calculations are based on this
-    difference = numpy array reference, for output. the difference that should be applied to calculate the next frame 
-    """
-    x = int(x)
-    y = int(y)
-    width,length = prev_frame.shape
+                            # just add the ds portion
+                            shared_array[i+x][j+y] = shared_array[i+x][j+y] + ds
+        else:
+            shared_array[x][y] = shared_array[x][y] + dsediment
 
-    # if point is within grid
-    if not (x < 0 or x >= width or y<0 or y>=length):
-        neighbors = np.empty(9)
-        neighbors[:] = np.NaN
-        validcount = 0
-        localsum = 0.0
-
-        #TODO: check if I can do this step faster with numpy functions
-
-        # iterate over neighbors, use them to calculate mean if they are valid
-        for i in range(-1,2):
-            if i+x>=0 and i+x < width:
-                for j in range(-1,2):
-                    if j+y>=0 and j+y<length:
-                        # (i+x, j+y) is a valid neighbor, increment validcount and 
-                        validcount += 1
-                        localsum += prev_frame[i+x][j+y]
-
-        # divide the sediment among the valid tiles
-        ds = dsediment / float(validcount)
-        # calculate the avg height of the valid tiles
-        avg = localsum / float(validcount)
-        # now iterate over neighbors to update their values
-        for i in range(-1,2):
-            if i+x>=0 and i+x < width:
-                for j in range(-1,2):
-                    if j+y>=0 and j+y<length:
-                        # (i+x, j+y) is a valid tile, set its value to the local avg + the appropriate chunk of sediment
-                        # set em all to the avg, kindof like a smearing brush (** this has little artefacts when the drop changes direction.. ** #TODO improve that)
-                        ##TODO: this is a bit convoluted.. ideally I won't need the prev_frame at all in depositSediment
-                        difference[i+x][j+y] = avg + ds - prev_frame[i+x][j+y]
-                        
-    # could return difference, but it's passed by reference so the original is modified I think that might add calls
-    #return difference
 
 def getGrid(x,y,prev_frame):
+    
     if (x < 0 or x >= prev_frame.shape[0] or y<0 or y>=prev_frame.shape[1]):
         return 0.0
     else:
@@ -159,7 +98,6 @@ def localNegativeGradient(x,y, prev_frame):
     #z1,z2,z3,z4,z6,z7,z8,z9)
     dzdx = -1.0*(2*(z6-z4) + z3 - z1 + z9 - z7) / 8.0
     dzdy = -1.0*(2*(z2-z8) + z3 - z9 + z1 - z7) / 8.0
-
     # clip em
     clipval = 0.02
     if np.abs(dzdx)>clipval:
@@ -167,22 +105,11 @@ def localNegativeGradient(x,y, prev_frame):
     if np.abs(dzdy)>clipval:
         dzdy = clipval*np.sign(dzdy)
 
-    #print("loc",dzdx,dzdy)
     return dzdx, -1.0*dzdy
 
-def getNegativeGradient(x,y):
-    global grad
-    gx = -1*grad[0][int(x)][int(y)]
-    gy = -1*grad[1][int(x)][int(y)]
-    #"""artificially clip gradient
-    clipval = 0.02
-    if np.abs(gx)>clipval:
-        gx = clipval*np.sign(gx)
-    if np.abs(gy)>clipval:
-        gy = clipval*np.sign(gy)
-    return gx,gy
+  
 
-def stepDrop(x,y,vx,vy,liquid,sediment, prev_frame, difference):
+def stepDropDirect(x,y,vx,vy,liquid,sediment, shared_array):
     """
     increment the simulation for the given drop
     vx,vy = previous dx,dy (prev velocity, dx/tile, used to calculate momentum)
@@ -190,14 +117,14 @@ def stepDrop(x,y,vx,vy,liquid,sediment, prev_frame, difference):
     prev_speed = np.sqrt(vx**2 + vy**2)
     
     gravity = 10.0
-    capacityConstant = 2.0
+    capacityConstant = 0.5
     momentumMultiplier = 0.9
 
     dzdx = 0
     dzdy = 0
 
     # get grid NEGATIVE gradient at drop position ** w.r.t. GRID ** (rise / 1 grid unit 'run')
-    dzdx, dzdy = localNegativeGradient(x,y, prev_frame)
+    dzdx, dzdy = localNegativeGradient(x,y, shared_array)
     #dzdx, dzdy = localNumpyNegativeGradient(x,y)
 
     # move drop according to gradient #TODO: incorporate momentum
@@ -212,7 +139,6 @@ def stepDrop(x,y,vx,vy,liquid,sediment, prev_frame, difference):
     slope = np.sqrt(dzdx**2 + dzdy**2)
 
     capacity  = slope*new_speed*liquid*capacityConstant
-
     dsediment = capacity - sediment
     
     # change position for next drop
@@ -221,17 +147,22 @@ def stepDrop(x,y,vx,vy,liquid,sediment, prev_frame, difference):
     x += dx
     y += dy
     
-    depositSedimentFancy(x,y,-1*dsediment, prev_frame, difference)
+    depositSedimentFancyDirect(x,y,-1*dsediment, shared_array)
     
     sediment += dsediment
 
     return x,y,dx,dy,liquid,sediment
 
-# strategy 1: just make a whole new difference array for each process to return (i expect to be slow)
-def simulateDropArraydiffs(prev_frame):
-    width,length = prev_frame.shape
+# strategy 2: make a dictionary of the changed values {(x,y): difference}, return the dictionary, then combine them all
+def simulateDropDictdiffs():
+    return
 
-    difference = np.zeros((width,length))
+# strategy 3: write effect of drops directly to the shared array and hope for the best
+# #TODO: benchmark against dictionary approach
+def simulateDropRiskyWrite(shared_array):
+    width,length = shared_array.shape
+
+    #difference = np.zeros((width,length))
 
     x = np.random.randint(width-1)
     y = np.random.randint(length-1)
@@ -254,25 +185,33 @@ def simulateDropArraydiffs(prev_frame):
 
         j+=1
         
-        x,y,dx,dy,liquid,sediment = stepDrop(x,y,dx,dy,liquid,sediment, prev_frame, difference)
+        x,y,dx,dy,liquid,sediment = stepDropDirect(x,y,dx,dy,liquid,sediment, shared_array)
         buffer = 3
 
         if (int(x) < 0+buffer or int(x) >= width-buffer or int(y)<0+buffer or int(y)>=length-buffer):
             break
     # put all sediment where the walker finishes
-    depositSedimentFancy(x,y,sediment, prev_frame, difference)
-    return difference
-
-# strategy 2: make a dictionary of the changed values {(x,y): difference}, return the dictionary, then combine them all
-def simulateDropDictdiffs():
+    depositSedimentFancyDirect(x,y,sediment, shared_array)
     return
+
+def work_function(shm_name, shm_shape, shm_dtype, numDropsPerFrame):
+    # locate shared memory block by name
+    shm = SharedMemory(shm_name)
+    # Create the np.ndarray from the buffer of the shared memory
+    np_array = np.ndarray(shape=shm_shape, dtype=shm_dtype, buffer=shm.buf)
+    
+    for drop in range(numDropsPerFrame):
+        simulateDropRiskyWrite(np_array)
+        if(drop%100) == 0:
+            print('drop',drop)
+    return 'jazz'
 
 def main():
     width  = 400
     length = 400
-    gravity = 10.0
+    gravity = 10.0 # 10.0
     capacityConstant = 2.0
-    momentumMultiplier = 0.9
+    momentumMultiplier = 0.9 # 0.9
 
     showdrops = False
 
@@ -287,90 +226,69 @@ def main():
     else:
         grid = cv2.imread("../../heightmaps/"+mapsrc, cv2.IMREAD_GRAYSCALE)
         grid = grid * (1.0/256.0)
-    prev_grid = grid.copy()
 
-    numFrames = 25
-    numDropsPerFrame = 2000
-    numdrops = numFrames * numDropsPerFrame
-    """
-    s = mlab.surf(grid, warp_scale=25.0)
-    @mlab.animate(delay=10)
-    def anim():
-        # for each frame (serially), 
-        # we'll calculate a bunch of drops on the previous frame (in parallel)
-        # and combine the results to use as the next frame
-        for i in range(numFrames):
-            global grad # only for numpy gradients
-            global grid
-            global prev_grid
+    shape, dtype = grid.shape, grid.dtype
+    print(shape)
+    name = ''
+    # create a section of shared memory of the same size as the grid array
+    with SharedMemoryManager() as smm:
+        #shm = shared_memory.SharedMemory(create=True, size=init_grid.nbytes)
+        shm = smm.SharedMemory(size=grid.nbytes)
+        name = shm.name
+        
+        # create another ndarray of the same shape & type as grid, backed by shared memory
+        shared_array = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
 
-            pool = multiprocessing.Pool()
-            result = pool.map(simulateDropArraydiffs, prev_grid)
-            print(result)
-            grid += result
-            # strategy 1: just make a whole new difference array for each process to return (i expect to be slow)
-            #simulateDropArraydiffs(prev_frame)
+        # copy the initialized data into the shared area of memory
+        np.copyto(shared_array, grid)
 
-            # strategy 2: make a dictionary of the changed values {(x,y): difference}, return the dictionary, then combine them all
-            #simulateDropDictdiffs(prev_frame)
-
-            prev_grid = grid.copy()
-            
-            # every 50 drops
-            if(i%100==0):
-                print(i)
-                # update mesh vertices for 3d rendering
-                s.mlab_source.scalars = grid
-                yield
-            if i == numdrops-1:
-                end = time.time()
-                print("ELAPSED:",end-start)
-                cv2.imwrite("../../heightmaps/eroded_"+str(numdrops)+"_"+mapsrc, grid*256.0)
-    """
-
+    numprocesses = 6
+    numFrames = 1
+    numDropsPerFrame = 10000
+    numdrops = numFrames * numprocesses * numDropsPerFrame
+    
     start = time.time()
 
+    # frames don't need to exist if we're reading and writing to the same shared array... #TODO remove this for loop
     for i in range(numFrames):
-        prev_grids = []
-        #pool code
-        """
-        # horrifying:
-        for drop in range(numDropsPerFrame):
-            # maybe ill get lucky and this just does it by reference..
-            prev_grids.append(prev_grid)
-        
-        print("POOLING:",len(prev_grids))
-        pool = multiprocessing.Pool(2)
-        
-        print("REALLy POOLING:")
-        results = pool.map(simulateDropArraydiffs, prev_grids)
-        
-        pool.close()
-        print("pool closed")
-        pool.join()
-        print("pool joined")
-        
-        #print("res:\n",sum(results))
-        grid += sum(results)
         
         # strategy 1: just make a whole new difference array for each process to return (i expect to be slow)
         #simulateDropArraydiffs(prev_frame)
 
         # strategy 2: make a dictionary of the changed values {(x,y): difference}, return the dictionary, then combine them all
         #simulateDropDictdiffs(prev_frame)
-        """
-        #non pool code for profiling:
-        for drop in range(numDropsPerFrame):
-            result = simulateDropArraydiffs(prev_grid)
-            grid += result
-
-        prev_grid = grid.copy()
         
-        # every 50 drops
-        if(i%100==0):
-            print(i)
+        #non pool code for profiling:
+        #for drop in range(numDropsPerFrame):
+        #    result = simulateDropArraydiffs(prev_grid)
+        #    grid += result
 
+        #prev_grid = grid.copy()
+
+        # simulate N (6?) drops with a ProcessPoolExecutor
+        #with ProcessPoolExecutor(cpu_count()) as exe:
+        
+        with ProcessPoolExecutor(numprocesses) as exe:
+            fs = [exe.submit(work_function, name, shape, dtype, numDropsPerFrame) for _ in range(numprocesses)]
+            for future in as_completed(fs):
+                #print('as_completed yeeted,',fs)
+                #print('res:',future.result())
+                pass
+            
+        # every 10 frames
+        if(i%10==0):
+            shm = SharedMemory(name)
+            # Create the np.ndarray from the buffer of the shared memory
+            grid = np.ndarray(shape=shape, dtype=dtype, buffer=shm.buf)
+            print('frame #:',i)
+            print(grid)
+
+        # export on last frame
         if i == numFrames-1:
+            shm = SharedMemory(name)
+            # Create the np.ndarray from the buffer of the shared memory
+            grid = np.ndarray(shape=shape, dtype=dtype, buffer=shm.buf)
+            
             end = time.time()
             print("ELAPSED:",end-start)
             output_filename = "../../heightmaps/mp_eroded_"+str(numdrops)+"_"+mapsrc

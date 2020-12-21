@@ -1,61 +1,92 @@
 import numpy as np
-import multiprocessing
-from multiprocessing import shared_memory
+from multiprocessing.shared_memory import SharedMemory
+from multiprocessing.managers import SharedMemoryManager
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from multiprocessing import current_process, cpu_count, Process, Pool
+import random
+
 import matplotlib.pyplot as plt
 
-def initialize_shared_ndarray_for_reading(shape):
-    # make an array to store terrain 
-    init_grid = np.random.normal(0, 1, shape)
-    #print(init_grid)
+# work_func:
+# get shm from name arg
+# make arr w/ shm buffer
+# do work
+def work_function(x,y,shm_name, shm_shape, shm_dtype):
+    print("doing work on",shm_name)
+    return write_test(x,y,shm_name, shm_shape, shm_dtype)
 
-    # create a section of shared memory of the same size as the grid array
-    shm = shared_memory.SharedMemory(create=True, size=init_grid.nbytes)
+def read_test(x,y,shm_name,shm_shape,shm_dtype):
+    # Locate the shared memory by its name
+    shm = SharedMemory(shm_name)
+    # Create the np.ndarray from the buffer of the shared memory
+    np_array = np.ndarray(shape=shm_shape, dtype=shm_dtype, buffer=shm.buf)
+    result = np_array[x][y]
+    print("RESULT:",result)
+    return result
 
-    # create another ndarray of the same shape & type as grid, backed by shared memory
-    prev_grid = np.ndarray(init_grid.shape, dtype=init_grid.dtype, buffer=shm.buf)
-
-    # fill up the shared array with the init values
-    prev_grid[:] = init_grid[:]
+def write_test(x,y,shm_name,shm_shape,shm_dtype):
+    """
+    writes a random integer to the x,y cell of the shared numpy array
+    haven't been able to find if writing from multiple processes to the same section of memory is handled,
+    I have looked through the docs, I assume it's NOT safe, but i'm trying it nonetheless.
+    """
+    shm = SharedMemory(shm_name)
+    np_array = np.ndarray(shape=shm_shape, dtype=shm_dtype, buffer=shm.buf)
     
-    print("shared array",shm.name,"has been initialized")
-    return shm.name
-
-def read_from_shared(x,y,shared_ndarray_name):
-    print("swine",x,y,shared_ndarray_name)
-    print("attempting to get reference to shared memory",shared_ndarray_name)
-    shared_arr = shared_memory.SharedMemory(name=shared_ndarray_name)
-    print('swane AA!!!')
-    for i in range(-5,6):
-        for j in range(-5,6):
-            print("guzzle",end="")
-            print(shared_arr[(x+i)%400][(y+j)%400])
-    print('read from',x,y)
-
-def pool_read(name):
-    # Create a multiprocessing Pool
-    pool = multiprocessing.Pool(2) 
-
-    # read multiple times with specified args
-    args = [(19,53,name),(35,52,name),(24,63,name),(7,86,name)]
-    pool.starmap(read_from_shared, args)
+    # can we write, does it do locks etc automatically, who knows:
+    randn = np.random.randint(100)
+    print('randn:',randn)
+    np_array[x][y] = randn
     
-    # parallelized portion is finished, close the pool
-    # not sure if this is entirely necessary here
-    print("closing pool...")
-    #pool.close()
-    #print("pool closed")
-    pool.join()
-    print("pool joined")
+    print("np_array[x][y]:",np_array[x][y])
+    return randn
 
+
+# main:
+# init data
+# with smm:
+#  make smm.shm
+#  make arr using shm buffer
+#  copy init data into there
+#  with ppe as exe:
+#   exe.submit() the work_func w/ args 
+#   for _ in as_completed: pass
 def main():
     # initialize a shared 400x400 ndarray called "prev_grid"
-    name = initialize_shared_ndarray_for_reading((400,400))
-    print("initialized ndarray memory named",name)
+    #name, shape, dtype = initialize_shared_ndarray_for_reading((400,400))
+    #print("initialized ndarray memory named",name)
+
+    # putting that whole func into main:
+    # make an array to store terrain 
+    shape = (400,400)
+    #init_grid = np.random.normal(0, 1, shape)
+    init_grid = np.zeros(shape)
+    #print(init_grid)
+    shape, dtype = init_grid.shape, init_grid.dtype
+    print(shape)
     
-    # read without pool
-    read_from_shared(51,25,name)
-    # everyone get in the pool to read
-    #pool_read(name)
+    name = ''
+    # create a section of shared memory of the same size as the grid array
+    with SharedMemoryManager() as smm:
+        #shm = shared_memory.SharedMemory(create=True, size=init_grid.nbytes)
+        shm = smm.SharedMemory(size=init_grid.nbytes)
+        name = shm.name
+        
+        # create another ndarray of the same shape & type as grid, backed by shared memory
+        prev_grid = np.ndarray(shape, dtype=dtype, buffer=shm.buf)
+
+        # copy the initialized data into the shared area of memory
+        np.copyto(prev_grid, init_grid)
+
+    with ProcessPoolExecutor(cpu_count()) as exe:
+        fs = [exe.submit(work_function, 1, 1, name, shape, dtype) for _ in range(cpu_count())]
+        for future in as_completed(fs):
+            print('as_completed yeeted,',fs)
+            print('res:',future.result())
+            pass
+    
+    print('\nprev_grid:')
+    print(prev_grid)
 
 if __name__== '__main__':
     main()
