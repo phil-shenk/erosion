@@ -230,7 +230,7 @@ def anim():
             meas = np.ptp(xstephist)**2+np.ptp(ystephist)**2
 
             j+=1
-            
+
             x,y,dx,dy,liquid,sediment = stepDrop(x,y,dx,dy,liquid,sediment)
             buffer = 3
             
