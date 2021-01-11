@@ -244,7 +244,7 @@ def main():
 
     numprocesses = 6
     numFrames = 1
-    numDropsPerFrame = 10000
+    numDropsPerFrame = 100000
     numdrops = numFrames * numprocesses * numDropsPerFrame
     
     start = time.time()
