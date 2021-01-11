@@ -116,7 +116,7 @@ def main():
 
     end = time.time()
     print("ELAPSED:",end-start)
-    output_filename = "../../heightmaps/"+mapsrc+"mp_eroded_"+str(numdrops)+".png
+    output_filename = "../../heightmaps/"+mapsrc+"mp_eroded_"+str(numdrops)+".png"
     # make sure output is scaled for image
     #grid *= (255.0/grid.max())
 
