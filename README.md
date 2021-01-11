@@ -9,10 +9,9 @@ to leverage the extra processing power of multicore machines.
 The simulation is rendered in a live, interactive window using the Mayavi package for python.
 
 ### Screenshots
- 
+![painted terrain](https://github.com/phil-shenk/erosion/blob/master/screenshots/wide_old.jpg)  
+  
 ![dense voronoi](https://github.com/phil-shenk/erosion/blob/master/screenshots/square_dense_voronoi.jpg)  
 
 ![square voronoi](https://github.com/phil-shenk/erosion/blob/master/screenshots/voronoi_square.jpg)  
 
-![painted terrain](https://github.com/phil-shenk/erosion/blob/master/screenshots/wide_old.jpg)  
-  
